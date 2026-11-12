@@ -1,0 +1,14 @@
+prefix=/workspace/build/vita-media
+exec_prefix=${prefix}
+libdir=/workspace/build/vita-media/lib
+includedir=/workspace/build/vita-media/include
+
+Name: libswresample
+Description: FFmpeg audio resampling library
+Version: 4.10.100
+Requires: libavutil >= 58.2.100
+Requires.private: 
+Conflicts:
+Libs: -L${libdir}  -lswresample -lm
+Libs.private: 
+Cflags: -I${includedir}

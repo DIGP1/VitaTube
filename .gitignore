@@ -1,0 +1,32 @@
+# Artefactos generados de CMake / VitaSDK (conserva build/vita-media/include y lib necesarios para compilar)
+build/*
+!build/vita-media/
+build/vita-media/*
+!build/vita-media/include/
+!build/vita-media/lib/
+
+*.vpk
+*.self
+*.velf
+*.sfo
+*.o
+*.obj
+*.d
+
+# Logs de ejecución, compilación y despliegue
+*.log
+
+# Paquetes externos y archivos temporales / de depuración
+Youtube.pkg
+scratch_req.json
+instrument_*.py
+
+# Documento técnico PDF (elimina esta línea si deseas subirlo)
+documentotecnico.pdf
+
+# Configuración local del editor
+.vscode/
+
+# Archivos temporales del sistema operativo
+.DS_Store
+Thumbs.db

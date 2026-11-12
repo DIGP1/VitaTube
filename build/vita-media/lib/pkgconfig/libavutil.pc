@@ -1,0 +1,14 @@
+prefix=/workspace/build/vita-media
+exec_prefix=${prefix}
+libdir=/workspace/build/vita-media/lib
+includedir=/workspace/build/vita-media/include
+
+Name: libavutil
+Description: FFmpeg utility library
+Version: 58.2.100
+Requires: 
+Requires.private: 
+Conflicts:
+Libs: -L${libdir}  -lavutil -pthread -lm
+Libs.private: 
+Cflags: -I${includedir}

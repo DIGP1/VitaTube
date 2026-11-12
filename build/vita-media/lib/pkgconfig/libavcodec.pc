@@ -1,0 +1,14 @@
+prefix=/workspace/build/vita-media
+exec_prefix=${prefix}
+libdir=/workspace/build/vita-media/lib
+includedir=/workspace/build/vita-media/include
+
+Name: libavcodec
+Description: FFmpeg codec library
+Version: 60.3.100
+Requires: libavutil >= 58.2.100
+Requires.private: 
+Conflicts:
+Libs: -L${libdir}  -lavcodec -pthread -lm -lSceAudiodec_stub -lSceVideodec_stub -lSceCodecEngine_stub
+Libs.private: 
+Cflags: -I${includedir}

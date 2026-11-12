@@ -1,0 +1,10 @@
+prefix=/workspace/build/vita-media
+includedir=${prefix}/include
+libdir=${prefix}/lib
+
+Name: mpv
+Description: mpv media player client library
+Version: 2.1.0
+Requires: libass >=  0.12.2, libavcodec >=  58.134.100, libavfilter >=  7.110.100, libavformat >=  58.76.100, libavutil >=  56.70.100, libswresample >=  3.9.100, libswscale >=  5.9.100, libarchive >=  3.4.0, zlib
+Libs: -L${libdir} -lmpv -pthread -lSceAudio_stub -lm
+Cflags: -I${includedir} -pthread
