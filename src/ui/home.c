@@ -81,6 +81,7 @@ static int player_is_subscribed = 0;
 static int player_like_state = 0;
 static unsigned long player_video_views = 0;
 static int player_video_is_live = 0;
+static char player_error_msg[160] = {0};
 static YoutubeVideo player_related_videos[12];
 static unsigned int player_related_count = 0;
 static vita2d_texture *player_related_thumbnails[12];
@@ -455,6 +456,7 @@ static void player_switch_quality(unsigned int new_q)
     }
 
     player_url[0] = 0;
+    player_error_msg[0] = 0;
     player_state = 1;
     player_overlay_timer = 240;
 
@@ -496,6 +498,7 @@ static void open_player_for_video(const YoutubeVideo *video)
     }
 
     player_url[0] = 0;
+    player_error_msg[0] = 0;
     player_quality = youtube_max_quality();
     player_state = 1;
     player_active = 1;
@@ -533,17 +536,40 @@ static void update_player(void)
 {
     if (player_state == 2) {
         player_state = 0;
+        player_error_msg[0] = '\0';
         status_message = "Reproduciendo video";
         log_event("player_stream video=%s quality=%up",
                   player_video_id, player_quality);
-        video_player_open(player_url);
-        player_resume_ms = 0;
-        video_player_set_volume(player_volume);
-        player_overlay_timer = 180;
+        if (video_player_open(player_url) < 0) {
+            const char *verr = video_player_get_error();
+            snprintf(player_error_msg, sizeof(player_error_msg), "%s",
+                     (verr && verr[0]) ? verr : "No se pudo abrir el reproductor");
+            status_message = player_error_msg;
+            player_overlay_timer = 240;
+        } else {
+            player_resume_ms = 0;
+            video_player_set_volume(player_volume);
+            player_overlay_timer = 180;
+        }
     } else if (player_state == -1) {
-        status_message = "No se pudo obtener el stream del video";
+        snprintf(player_error_msg, sizeof(player_error_msg), "%s",
+                 player_video_is_live
+                     ? "No se pudo cargar este directo. Revisa tu conexion o intenta de nuevo."
+                     : "No se pudo obtener el stream del video.");
+        status_message = player_error_msg;
         log_event("player_stream_failed video=%s", player_video_id);
         player_state = 0;
+        player_overlay_timer = 240;
+    }
+
+    if (player_active && player_error_msg[0] == '\0' &&
+        video_player_get_status() == VPLAYER_ERROR) {
+        const char *verr = video_player_get_error();
+        snprintf(player_error_msg, sizeof(player_error_msg), "%s",
+                 (verr && verr[0]) ? verr : "Error al cargar o reproducir el video");
+        status_message = player_error_msg;
+        log_event("player_playback_error video=%s msg=%s", player_video_id, player_error_msg);
+        player_overlay_timer = 240;
     }
 }
 
@@ -2024,6 +2050,42 @@ void home_update(unsigned int pressed, const SceTouchData *touch, const SceTouch
     }
 
     if (player_active) {
+        /* Si ocurrio un error al cargar el video/directo, permitir Reintentar o Volver */
+        if (player_error_msg[0] != '\0' || video_player_get_status() == VPLAYER_ERROR) {
+            player_show_settings = 0;
+            player_show_desc = 0;
+            if (pressed & (SCE_CTRL_TRIANGLE | SCE_CTRL_CIRCLE)) {
+                video_player_close();
+                player_active = 0;
+                player_error_msg[0] = '\0';
+                status_message = "Video detenido";
+                audio_play_cancel();
+                return;
+            }
+            if (pressed & SCE_CTRL_CROSS) {
+                audio_play_select();
+                player_switch_quality(player_quality);
+                return;
+            }
+            if (touch && touch->reportNum > 0 && previous_touch_x < 0) {
+                int tx = touch->report[0].x / 2;
+                int ty = touch->report[0].y / 2;
+                if (ty >= 235 && ty <= 280) {
+                    if (tx >= 260 && tx <= 460) {
+                        audio_play_select();
+                        player_switch_quality(player_quality);
+                    } else if (tx >= 500 && tx <= 700) {
+                        video_player_close();
+                        player_active = 0;
+                        player_error_msg[0] = '\0';
+                        status_message = "Video detenido";
+                        audio_play_cancel();
+                    }
+                }
+            }
+            return;
+        }
+
         /* Descartar overlay de configuracion si esta abierto */
         if (player_show_settings) {
             if (pressed & (SCE_CTRL_CIRCLE | SCE_CTRL_TRIANGLE)) {
@@ -2099,6 +2161,7 @@ void home_update(unsigned int pressed, const SceTouchData *touch, const SceTouch
         if (pressed & (SCE_CTRL_TRIANGLE | SCE_CTRL_CIRCLE)) {
             video_player_close();
             player_active = 0;
+            player_error_msg[0] = '\0';
             status_message = "Video detenido";
             audio_play_cancel();
             return;
@@ -2272,7 +2335,7 @@ void home_update(unsigned int pressed, const SceTouchData *touch, const SceTouch
                     if (p > 1.0f) p = 1.0f;
                     uint64_t dur_ms = video_player_get_duration();
                     unsigned int total_sec = (player_video_duration > 0) ? player_video_duration : ((dur_ms > 0) ? (unsigned int)(dur_ms / 1000) : 0);
-                    if (total_sec > 0) {
+                    if (total_sec > 0 && !player_video_is_live) {
                         video_player_seek_to((uint64_t)(p * total_sec * 1000.0f));
                     }
                 } else if (touch_y >= 370 && touch_y <= 415) {
@@ -2625,23 +2688,39 @@ static void draw_player_screen(void)
         player_overlay_timer--;
     }
 
-    /* Mensajes de extraccion de stream o buffering */
-    if (player_state == 1) {
-        char q_msg[96];
-        snprintf(q_msg, sizeof(q_msg), "Cargando stream %s...", youtube_quality_label());
-        draw_rounded_rectangle(270.0f, 240.0f, 420.0f, 54.0f, 10.0f, RGBA8(15, 15, 15, 225));
-        draw_text(300.0f, 274.0f, RGBA8(250, 250, 255, 255), 0.78f, q_msg);
-    } else if (st == VPLAYER_BUFFERING) {
-        char buf_info[96];
-        snprintf(buf_info, sizeof(buf_info), "Cargando buffer... (%u KB)",
-                 video_player_get_buffered_bytes() / 1024);
-        draw_rounded_rectangle(270.0f, 240.0f, 420.0f, 54.0f, 10.0f, RGBA8(15, 15, 15, 225));
-        draw_text(300.0f, 274.0f, RGBA8(250, 250, 255, 255), 0.75f, buf_info);
+    int has_error = (player_error_msg[0] != '\0' || st == VPLAYER_ERROR);
+    const char *notice_txt = video_player_get_notice();
+
+    /* Mensajes de extraccion de stream o buffering (sin tapar la tarjeta de error) */
+    if (!has_error) {
+        if (player_state == 1) {
+            char q_msg[96];
+            snprintf(q_msg, sizeof(q_msg), "Cargando stream %s...", youtube_quality_label());
+            draw_rounded_rectangle(270.0f, 180.0f, 420.0f, 54.0f, 10.0f, RGBA8(15, 15, 15, 225));
+            draw_text(300.0f, 214.0f, RGBA8(250, 250, 255, 255), 0.78f, q_msg);
+        } else if (st == VPLAYER_BUFFERING) {
+            char buf_info[96];
+            snprintf(buf_info, sizeof(buf_info), "Cargando buffer... (%u KB)",
+                     video_player_get_buffered_bytes() / 1024);
+            draw_rounded_rectangle(270.0f, 180.0f, 420.0f, 54.0f, 10.0f, RGBA8(15, 15, 15, 225));
+            draw_text(300.0f, 214.0f, RGBA8(250, 250, 255, 255), 0.75f, buf_info);
+        } else if (st == VPLAYER_PLAYING && !video_player_has_frame()) {
+            draw_rounded_rectangle(270.0f, 180.0f, 420.0f, 54.0f, 10.0f, RGBA8(15, 15, 15, 225));
+            draw_text(320.0f, 214.0f, RGBA8(250, 250, 255, 255), 0.75f, "Iniciando reproduccion...");
+        }
+
+        if (notice_txt && notice_txt[0]) {
+            float nw = font ? (float)vita2d_pgf_text_width(font, 0.56f, notice_txt) + 36.0f : 320.0f;
+            float nx = (960.0f - nw) * 0.5f;
+            draw_rounded_rectangle(nx, 76.0f, nw, 34.0f, 17.0f, RGBA8(20, 20, 22, 230));
+            draw_rounded_outline(nx, 76.0f, nw, 34.0f, 17.0f, 1.5f, RGBA8(90, 90, 100, 255));
+            draw_text(nx + 18.0f, 99.0f, RGBA8(245, 245, 250, 255), 0.56f, notice_txt);
+        }
     }
 
     int show_osd = (player_overlay_timer > 0 || st == VPLAYER_PAUSED ||
                     player_state == 1 || st == VPLAYER_BUFFERING ||
-                    player_show_desc || player_show_settings);
+                    has_error || player_show_desc || player_show_settings);
     if (!show_osd) return;
 
     /* 2. Degradados / Scrims estilo YouTube TV */
@@ -2652,14 +2731,16 @@ static void draw_player_screen(void)
         vita2d_draw_rectangle(0, y, 960, 3, RGBA8(5, 5, 5, alpha));
     }
 
-    /* Scrim inferior degradado suave */
-    for (int y = 230; y < 330; y += 4) {
-        float f = ((float)(y - 230) / 100.0f);
-        unsigned char alpha = (unsigned char)(210.0f * f * f);
-        vita2d_draw_rectangle(0, y, 960, 4, RGBA8(10, 10, 10, alpha));
+    if (!has_error) {
+        /* Scrim inferior degradado suave */
+        for (int y = 230; y < 330; y += 4) {
+            float f = ((float)(y - 230) / 100.0f);
+            unsigned char alpha = (unsigned char)(210.0f * f * f);
+            vita2d_draw_rectangle(0, y, 960, 4, RGBA8(10, 10, 10, alpha));
+        }
+        /* Fondo oscuro semi-solido detras de controles y carrusel */
+        vita2d_draw_rectangle(0, 330, 960, 214, RGBA8(10, 10, 10, 240));
     }
-    /* Fondo oscuro semi-solido detras de controles y carrusel */
-    vita2d_draw_rectangle(0, 330, 960, 214, RGBA8(10, 10, 10, 240));
 
     /* 3. Metadatos del Video (Esquina Superior Izquierda) */
     draw_title_with_emojis(34.0f, 38.0f, RGBA8(255, 255, 255, 255), 0.85f,
@@ -2676,6 +2757,30 @@ static void draw_player_screen(void)
                  player_video_author[0] ? player_video_author : "VitaTube", views_str);
     }
     draw_text(34.0f, 66.0f, RGBA8(170, 170, 170, 255), 0.54f, meta_str);
+
+    if (has_error) {
+        const char *err_desc = player_error_msg[0]
+            ? player_error_msg
+            : (video_player_get_error()[0] ? video_player_get_error() : "No se pudo cargar o reproducir el video");
+        float ex = 150.0f, ey = 120.0f, ew = 660.0f, eh = 175.0f;
+        draw_rounded_rectangle(ex, ey, ew, eh, 14.0f, RGBA8(20, 20, 24, 248));
+        draw_rounded_outline(ex, ey, ew, eh, 14.0f, 2.0f, RGBA8(220, 45, 55, 255));
+
+        vita2d_draw_fill_circle(ex + 44.0f, ey + 44.0f, 18.0f, RGBA8(220, 35, 45, 255));
+        vita2d_draw_rectangle(ex + 42.0f, ey + 32.0f, 4.0f, 14.0f, RGBA8(255, 255, 255, 255));
+        vita2d_draw_rectangle(ex + 42.0f, ey + 49.0f, 4.0f, 4.0f, RGBA8(255, 255, 255, 255));
+
+        draw_text(ex + 76.0f, ey + 42.0f, RGBA8(255, 255, 255, 255), 0.80f,
+                  player_video_is_live ? "Error al cargar el directo" : "Error al cargar el video");
+        draw_text(ex + 76.0f, ey + 74.0f, RGBA8(205, 208, 218, 255), 0.54f, err_desc);
+
+        draw_rounded_rectangle(260.0f, 236.0f, 200.0f, 42.0f, 10.0f, RGBA8(245, 245, 245, 255));
+        draw_text(294.0f, 263.0f, RGBA8(15, 15, 15, 255), 0.60f, "[X] Reintentar");
+
+        draw_rounded_rectangle(500.0f, 236.0f, 200.0f, 42.0f, 10.0f, RGBA8(42, 42, 46, 255));
+        draw_text(538.0f, 263.0f, RGBA8(240, 240, 245, 255), 0.60f, "[O] Volver");
+        return;
+    }
 
     /* 4. Barra de Tiempo y Progreso */
     char cur_time_str[32], total_time_str[32];

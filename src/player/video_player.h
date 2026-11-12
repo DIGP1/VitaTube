@@ -52,6 +52,8 @@ void video_player_set_volume(unsigned int volume); // 0 a 100
  * Informacion de estado
  */
 VideoPlayerStatus video_player_get_status(void);
+const char *video_player_get_error(void);
+const char *video_player_get_notice(void);
 uint64_t video_player_get_current_time(void); // En milisegundos
 uint64_t video_player_get_duration(void);     // En milisegundos
 uint32_t video_player_get_buffered_bytes(void);
