@@ -1,8 +1,12 @@
 #include "http.h"
 #include "log.h"
+#include <psp2/kernel/threadmgr.h>
 #include <psp2/net/http.h>
 #include <psp2/net/net.h>
+#include <psp2/net/netctl.h>
+#include <psp2/libssl.h>
 #include <psp2/sysmodule.h>
+#include <curl/curl.h>
 #include <string.h>
 #include <stdio.h>
 
@@ -10,29 +14,46 @@
 
 static int http_ready;
 static int http_template;
+static SceUID s_http_mutex = -1;
 
 int http_init(void)
 {
     SceNetInitParam net_param;
     static unsigned char net_memory[256 * 1024];
 
+    if (s_http_mutex < 0) {
+        s_http_mutex = sceKernelCreateMutex("VitaTubeHttpMutex", 0, 0, NULL);
+    }
+
     memset(&net_param, 0, sizeof(net_param));
     net_param.memory = net_memory;
     net_param.size = sizeof(net_memory);
     net_param.flags = 0;
 
-    if (sceSysmoduleLoadModule(SCE_SYSMODULE_NET) < 0 ||
-        sceSysmoduleLoadModule(SCE_SYSMODULE_HTTP) < 0 ||
-        sceSysmoduleLoadModule(SCE_SYSMODULE_HTTPS) < 0 ||
-        sceNetInit(&net_param) < 0 ||
-        sceHttpInit(128 * 1024) < 0) {
+    sceSysmoduleLoadModule(SCE_SYSMODULE_NET);
+    sceSysmoduleLoadModule(SCE_SYSMODULE_SSL);
+    sceSysmoduleLoadModule(SCE_SYSMODULE_HTTP);
+    sceSysmoduleLoadModule(SCE_SYSMODULE_HTTPS);
+
+    if (sceNetInit(&net_param) < 0) {
         return -1;
     }
+    sceNetCtlInit();
+    sceSslInit(300 * 1024);
+    if (sceHttpInit(256 * 1024) < 0) {
+        sceNetTerm();
+        return -1;
+    }
+
+    curl_global_init(CURL_GLOBAL_ALL);
 
     http_template = sceHttpCreateTemplate(BROWSER_USER_AGENT,
                                            SCE_HTTP_VERSION_1_1, 0);
     if (http_template < 0) {
+        curl_global_cleanup();
         sceHttpTerm();
+        sceSslTerm();
+        sceNetCtlTerm();
         sceNetTerm();
         return -1;
     }
@@ -55,10 +76,13 @@ static int http_request(const char *url, const char *method, const char *body,
         return -1;
     }
 
+    if (s_http_mutex >= 0) sceKernelLockMutex(s_http_mutex, 1, NULL);
+
     vt_log(VT_LOG_DEBUG, "[HTTP] %s %s", method, url);
     connection = sceHttpCreateConnectionWithURL(http_template, url, 0);
     if (connection < 0) {
         vt_log(VT_LOG_ERROR, "[HTTP] Error creando conexion: %d", connection);
+        if (s_http_mutex >= 0) sceKernelUnlockMutex(s_http_mutex, 1);
         return connection;
     }
     request = sceHttpCreateRequestWithURL(connection,
@@ -70,6 +94,7 @@ static int http_request(const char *url, const char *method, const char *body,
     if (request < 0) {
         vt_log(VT_LOG_ERROR, "[HTTP] Error creando request: %d", request);
         sceHttpDeleteConnection(connection);
+        if (s_http_mutex >= 0) sceKernelUnlockMutex(s_http_mutex, 1);
         return request;
     }
 
@@ -113,6 +138,7 @@ static int http_request(const char *url, const char *method, const char *body,
 
     sceHttpDeleteRequest(request);
     sceHttpDeleteConnection(connection);
+    if (s_http_mutex >= 0) sceKernelUnlockMutex(s_http_mutex, 1);
     return (total > 0) ? total : (total < 0 ? total : -1);
 }
 
@@ -142,16 +168,20 @@ int http_get_binary(const char *url, void *response, unsigned int response_size)
     int received;
 
     if (!http_ready || !url || !response || response_size == 0) return -1;
+    if (s_http_mutex >= 0) sceKernelLockMutex(s_http_mutex, 1, NULL);
+
     vt_log(VT_LOG_DEBUG, "[HTTP] GET binario %s", url);
     connection = sceHttpCreateConnectionWithURL(http_template, url, 0);
     if (connection < 0) {
         vt_log(VT_LOG_ERROR, "[HTTP] Error creando conexion binaria: %d", connection);
+        if (s_http_mutex >= 0) sceKernelUnlockMutex(s_http_mutex, 1);
         return connection;
     }
     request = sceHttpCreateRequestWithURL(connection, SCE_HTTP_METHOD_GET,
                                           url, 0);
     if (request < 0) {
         sceHttpDeleteConnection(connection);
+        if (s_http_mutex >= 0) sceKernelUnlockMutex(s_http_mutex, 1);
         return request;
     }
     sceHttpSetAutoRedirect(request, 1);
@@ -176,11 +206,13 @@ int http_get_binary(const char *url, void *response, unsigned int response_size)
     }
     sceHttpDeleteRequest(request);
     sceHttpDeleteConnection(connection);
+    if (s_http_mutex >= 0) sceKernelUnlockMutex(s_http_mutex, 1);
     return total;
 }
 
 int http_download_file(const char *url, const char *dest_path, volatile int *stop_flag, volatile unsigned int *bytes_downloaded)
 {
+    int stream_tmpl;
     int connection;
     int request;
     int status;
@@ -198,9 +230,15 @@ int http_download_file(const char *url, const char *dest_path, volatile int *sto
         return -1;
     }
 
-    connection = sceHttpCreateConnectionWithURL(http_template, url, 0);
+    stream_tmpl = sceHttpCreateTemplate(BROWSER_USER_AGENT, SCE_HTTP_VERSION_1_1, 0);
+    if (stream_tmpl < 0) {
+        stream_tmpl = http_template;
+    }
+
+    connection = sceHttpCreateConnectionWithURL(stream_tmpl, url, 0);
     if (connection < 0) {
         vt_log(VT_LOG_ERROR, "[HTTP] Error conexion stream: %d", connection);
+        if (stream_tmpl != http_template && stream_tmpl >= 0) sceHttpDeleteTemplate(stream_tmpl);
         fclose(fp);
         return connection;
     }
@@ -209,6 +247,7 @@ int http_download_file(const char *url, const char *dest_path, volatile int *sto
     if (request < 0) {
         vt_log(VT_LOG_ERROR, "[HTTP] Error request stream: %d", request);
         sceHttpDeleteConnection(connection);
+        if (stream_tmpl != http_template && stream_tmpl >= 0) sceHttpDeleteTemplate(stream_tmpl);
         fclose(fp);
         return request;
     }
@@ -245,18 +284,27 @@ int http_download_file(const char *url, const char *dest_path, volatile int *sto
     fclose(fp);
     sceHttpDeleteRequest(request);
     sceHttpDeleteConnection(connection);
+    if (stream_tmpl != http_template && stream_tmpl >= 0) sceHttpDeleteTemplate(stream_tmpl);
     return (int)total;
 }
 
 void http_shutdown(void)
 {
     if (http_template >= 0) sceHttpDeleteTemplate(http_template);
+    if (s_http_mutex >= 0) {
+        sceKernelDeleteMutex(s_http_mutex);
+        s_http_mutex = -1;
+    }
     if (http_ready) {
+        curl_global_cleanup();
         sceHttpTerm();
+        sceSslTerm();
+        sceNetCtlTerm();
         sceNetTerm();
     }
     sceSysmoduleUnloadModule(SCE_SYSMODULE_HTTPS);
     sceSysmoduleUnloadModule(SCE_SYSMODULE_HTTP);
+    sceSysmoduleUnloadModule(SCE_SYSMODULE_SSL);
     sceSysmoduleUnloadModule(SCE_SYSMODULE_NET);
     http_template = -1;
     http_ready = 0;

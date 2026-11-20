@@ -310,6 +310,7 @@ static int ensure_mpv_initialized(void)
         mpv_set_option_string(s_mpv, "demuxer-lavf-analyzeduration", "1.5");
         mpv_set_option_string(s_mpv, "demuxer-lavf-probescore", "24");
         mpv_set_option_string(s_mpv, "keep-open", "yes");
+        mpv_set_option_string(s_mpv, "keepaspect", "no");
         /* Desactivar OSD y subtitulos internos de libmpv (evita crash GXM/libass al hacer seek) */
         mpv_set_option_string(s_mpv, "osd-level", "0");
         mpv_set_option_string(s_mpv, "osd-bar", "no");
@@ -541,6 +542,9 @@ void video_player_close(void)
     }
 
     if (s_mpv) {
+        int pause_flag = 0;
+        mpv_set_property_string(s_mpv, "pause", "no");
+        mpv_set_property_async(s_mpv, 0, "pause", MPV_FORMAT_FLAG, &pause_flag);
         const char *cmd[] = {"stop", NULL};
         mpv_command(s_mpv, cmd);
     }
@@ -788,6 +792,7 @@ void video_player_update(void)
         char vol_str[32];
         snprintf(vol_str, sizeof(vol_str), "%u", s_current_volume);
         mpv_set_property_string(s_mpv, "volume", vol_str);
+        mpv_set_property_string(s_mpv, "pause", "no");
 
         const char *cmd[] = {"loadfile", "vts://stream", "replace", NULL};
         int err = mpv_command(s_mpv, cmd);
@@ -839,13 +844,18 @@ void video_player_update(void)
                 }
                 break;
             }
-            case MPV_EVENT_FILE_LOADED:
+            case MPV_EVENT_FILE_LOADED: {
                 vt_log(VT_LOG_INFO, "[VideoPlayer] MPV_EVENT_FILE_LOADED exitoso");
                 log_mem_stats("file_loaded");
+                int pause_flag = 0;
+                mpv_set_property_string(s_mpv, "pause", "no");
+                mpv_set_property_async(s_mpv, 0, "pause", MPV_FORMAT_FLAG, &pause_flag);
                 s_file_loaded = 1;
+                s_stage = PLAYER_STAGE_PLAYING;
                 s_status = VPLAYER_PLAYING;
                 s_pending_seek_ms = 0;
                 break;
+            }
             case MPV_EVENT_END_FILE: {
                 mpv_event_end_file *end_event = (mpv_event_end_file *)event->data;
                 vt_log(VT_LOG_INFO, "[VideoPlayer] MPV_EVENT_END_FILE (reason=%d, error=%d)",
@@ -959,5 +969,23 @@ void video_player_draw(int x, int y, int width, int height)
         float scale_x = (float)width / 960.0f;
         float scale_y = (float)height / 544.0f;
         vita2d_draw_texture_scale(s_render_texture, (float)x, (float)y, scale_x, scale_y);
+    }
+}
+
+void video_player_draw_rotated(int clockwise)
+{
+    vita2d_draw_rectangle(0, 0, 960, 544, RGBA8(0, 0, 0, 255));
+
+    if (s_has_rendered_frame && s_render_texture) {
+        float scale_x = 544.0f / 960.0f;
+        float scale_y = 960.0f / 544.0f;
+        float angle = clockwise ? 1.5707963f : -1.5707963f;
+        vita2d_draw_texture_scale_rotate_hotspot(
+            s_render_texture,
+            480.0f, 272.0f,
+            scale_x, scale_y,
+            angle,
+            480.0f, 272.0f
+        );
     }
 }

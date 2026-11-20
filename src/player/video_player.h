@@ -72,6 +72,7 @@ void video_player_update(void);
  * @param height Alto destino
  */
 void video_player_draw(int x, int y, int width, int height);
+void video_player_draw_rotated(int clockwise);
 
 #ifdef __cplusplus
 }

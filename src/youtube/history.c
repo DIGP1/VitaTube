@@ -6,7 +6,7 @@
 #include <sys/stat.h>
 
 #define HISTORY_FILE "ux0:data/VitaTube/history.dat"
-#define HISTORY_MAGIC "VTH1"
+#define HISTORY_MAGIC "VTH2"
 
 static YoutubeVideo history_videos[HISTORY_MAX];
 static unsigned int history_total = 0;

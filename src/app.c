@@ -53,10 +53,6 @@ void app_run(void)
         unsigned int pressed = pad.buttons & ~previous_buttons;
         previous_buttons = pad.buttons;
 
-        if (pad.buttons & SCE_CTRL_START) {
-            running = 0;
-        }
-
         home_update(pressed, &touch, &touch_back);
 
         vita2d_start_drawing();

@@ -1,14 +1,20 @@
 #include "log.h"
 #include <debugnet.h>
+#include <psp2/kernel/threadmgr.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <sys/stat.h>
 
 static int log_ready = 0;
 static FILE *s_log_file = NULL;
+static SceUID s_log_mutex = -1;
 
 int vt_log_init(void)
 {
+    if (s_log_mutex < 0) {
+        s_log_mutex = sceKernelCreateMutex("VitaTubeLogMutex", 0, 0, NULL);
+    }
+
     int result = debugNetInit("192.168.31.8", 18194, DEBUG);
     log_ready = (result >= 0);
 
@@ -31,6 +37,10 @@ void vt_log(int level, const char *format, ...)
     vsnprintf(message, sizeof(message), format, args);
     va_end(args);
 
+    if (s_log_mutex >= 0) {
+        sceKernelLockMutex(s_log_mutex, 1, NULL);
+    }
+
     if (log_ready) {
         debugNetPrintf(level, "%s\n", message);
     }
@@ -39,10 +49,17 @@ void vt_log(int level, const char *format, ...)
         fprintf(s_log_file, "%s\n", message);
         fflush(s_log_file);
     }
+
+    if (s_log_mutex >= 0) {
+        sceKernelUnlockMutex(s_log_mutex, 1);
+    }
 }
 
 void vt_log_finish(void)
 {
+    if (s_log_mutex >= 0) {
+        sceKernelLockMutex(s_log_mutex, 1, NULL);
+    }
     if (s_log_file) {
         fprintf(s_log_file, "=== VitaTube Log Finalizado ===\n");
         fclose(s_log_file);
@@ -51,5 +68,10 @@ void vt_log_finish(void)
     if (log_ready) {
         debugNetFinish();
         log_ready = 0;
+    }
+    if (s_log_mutex >= 0) {
+        sceKernelUnlockMutex(s_log_mutex, 1);
+        sceKernelDeleteMutex(s_log_mutex);
+        s_log_mutex = -1;
     }
 }

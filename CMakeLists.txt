@@ -20,6 +20,9 @@ add_executable(${PROJECT_NAME}
     src/log.c
     src/app.c
     src/audio.c
+    src/auth/auth.c
+    src/innertube/innertube.c
+    src/vps/vps.c
     src/ui/home.c
     src/network/http.c
     src/network/cJSON.c
@@ -31,6 +34,9 @@ add_executable(${PROJECT_NAME}
 
 target_include_directories(${PROJECT_NAME} PRIVATE
     src
+    src/auth
+    src/innertube
+    src/vps
     src/ui
     src/network
     src/youtube
@@ -56,6 +62,10 @@ target_link_libraries(${PROJECT_NAME}
     fribidi
     freetype
     archive
+    curl
+    jansson
+    ssl
+    crypto
     bz2
     zstd
     png16
@@ -76,8 +86,10 @@ target_link_libraries(${PROJECT_NAME}
     SceIofilemgr_stub
     debugnet
     SceNet_stub
+    SceNetCtl_stub
     SceHttp_stub
     SceSsl_stub
+    SceRtc_stub
     SceLibKernel_stub
     SceProcessmgr_stub
     jpeg
