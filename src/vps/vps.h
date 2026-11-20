@@ -8,11 +8,11 @@ extern "C" {
 #endif
 
 /* Endpoint oficial del VPS en Oracle Cloud */
-#define VPS_ORACLE_URL   "http://147.224.168.110:9000/"
+#define VPS_ORACLE_URL   "http://vitatubeextractor.duckdns.org:9000/"
 #define VPS_FALLBACK_URL "http://vitatubeextractor.duckdns.org:9000/"
 
 /*
- * Envia un POST a http://147.224.168.110:9000/ con el payload:
+ * Envia un POST a http://vitatubeextractor.duckdns.org:9000/ con el payload:
  * {"url": "https://www.youtube.com/watch?v=[video_id]", "videoQuality": "720", "youtubeVideoCodec": "h264"}
  * Extrae la URL final cuando el servidor devuelve {"status": "redirect", "url": "..."}.
  *
